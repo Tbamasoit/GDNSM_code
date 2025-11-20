@@ -1,0 +1,35 @@
+# overall.yaml
+
+# GPU 设置
+seed: 2025                   # For reproducibility.
+use_gpu: True     #√
+gpu_id: 0          #√
+
+# 数据集地址
+data_path: "/home/ma-user/work/GDNSM/datasets/"
+
+# 训练设置
+epochs: 200       #√            # 论文未明确指定，这是一个合理的初始值
+train_batch_size: 2048    #√     # 对应论文 3.1.3 节
+learning_rate: 0.001  #√       # 对应论文 3.1.3 节 (1e-3)
+optimizer: 'Adam'         #√       # 对应论文 Algorithm 1
+eval_step: 1         #√         # 每隔多少个 epoch 评估一次
+stopping_step: 10      #√       # Early stopping 的耐心值
+
+# 评估设置
+#eval_setting: TO_LS_RS       # 根据你的评估代码设置 (e.g., Top-k, Leave-one-out)
+metrics: ["Recall", "NDCG"]
+topk: [10, 20]                 # 论文中主要报告了 @10, @20
+valid_metric: 'Recall@20'       # 用于模型选择和 early stopping 的指标
+eval_batch_size: 4096
+
+# 输出和保存设置
+checkpoint_dir: 'checkpoints/' # [ADDED] Directory to save model checkpoints.
+save_recommended_topk: False   # [ADDED] Whether to save the final recommendation list.
+recommend_topk_dir: 'results/' # [ADDED] Directory to save the recommendation list file.
+
+# 用于自动调优的超参数列表
+# List of hyperparameters for automated tuning
+hyper_parameters:
+  - learning_rate
+  - train_batch_size

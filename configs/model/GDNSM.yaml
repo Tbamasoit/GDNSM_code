@@ -1,0 +1,51 @@
+# configs/model/GDNSM.yaml
+
+# == MCI Encoder 相关参数 ==
+embedding_size: 64      #√      # 对应论文 3.1.3 节的 hidden size d
+n_layers: 2        #√          # LightGCN 的层数，论文未指定，2 或 3 是常用值
+#cl_temperature: 0.2   #？       # 对应公式(9)中的 τ，需调优    # 代码中硬编码为 0.2, config 中无此项, 需要新增或接受硬编码
+cl_loss: 0.1      #√         # InfoNCE 损失的权重，需调优
+#lambda_neg: 0.5       #？        # 生成的负样本损失 L_NEG 的权重，需调优     # 代码中没有找到直接使用此项的地方, 可能在 Trainer 中使用, 暂时保留
+
+# 新增项:
+reg_weight: 0.001    #√    # 代码中有 self.reg_weight, BPR Loss 里用到了, 需要新增
+knn_k: 10          #√      # 代码中有 self.knn_k, 用于构建相似度图, 需要新增
+n_ui_layers: 2       #√    # 代码中有 self.n_ui_layers, 用于 User-Item View GCN
+
+# == 条件扩散模型相关参数 ==
+timesteps: 50    #√   # 对应论文 3.4 节的 T，在 {5, 25, 50, 100} 中搜索
+# 文本/视觉模态原始特征维度 (你需要根据你的数据集特征文件来设置)    # 文本/视觉模态原始特征维度 (这两个参数在代码中没有被直接使用，但可能在数据加载时用到，暂时保留)
+# raw_text_dim: 768     #？ 数据加载       # 示例值，例如 BERT 输出的维度
+# raw_visual_dim: 2048     #？ 数据加载     # 示例值，例如 ResNet 输出的维度
+# 新增项:
+scheduler: 'cosine_beta_schedule' #√  # 代码中有明确的 scheduler 选择逻辑, 需要新增
+loss_type: 'l2'                #√    # 代码中有明确的 loss_type 选择逻辑, 需要新增
+d_epoch: 5                    #√     # 代码中有 self.d_epoch, 但用途不明确, 根据代码上下文添加
+
+# == 负采样与生成相关参数 ==
+# Classifier-Free Guidance (CFG) Scale
+# cfg_scale_t: 1.1             # 对应论文 3.4 节的 s_t，在 {1.01, 1.1, 2, 5} 中搜索
+# cfg_scale_v: 1.1             # 对应论文 3.4 节的 s_v，在 {1.01, 1.1, 2, 5} 中搜索
+cfg_scale: 1.1         #√         #文本和视觉的指导强度是共享的。我们需要将这两个参数合并成一个
+# 生成负样本的数量 M (论文中总共生成 3M 个)
+#num_generated_samples_M: 5  #？  # 在 {1, 2, 5, 10} 中搜索 (对应总数 {3, 6, 15, 30})
+
+# == 动态难度调度器相关参数 ==
+schedule_start_epoch: 30   #？Trainer  # 对应论文 3.1.3 节的 S
+schedule_power: 1.0        #？Trainer  # 对应论文 3.1.3 节的 λ
+
+# 定义这个模型所有可供调优的超参数
+hyper_parameters:
+  - embedding_size
+  - n_ui_layers
+  - n_layers
+  - reg_weight
+  - cl_loss
+  - knn_k
+  - timesteps
+  - scheduler
+  - loss_type
+  - cfg_scale
+  - d_epoch
+  - schedule_start_epoch
+  - schedule_power

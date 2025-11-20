@@ -1,0 +1,30 @@
+# configs/dataset/Amazon-sports.yaml
+# Version 2.1 - Adapted to the existing path logic in GDNSM.py
+
+# ======================================================
+# File Naming Conventions within the Amazon-sports directory
+# ======================================================
+# Defines the names of the interaction files.
+
+data_format: 'pickle' 
+
+# Assumes these files exist inside the directory specified by 
+# `data_path` + `dataset_name` (e.g., /path/to/datasets/Amazon-sports/).
+interaction_files:
+  train: trnMat.pkl
+  valid: valMat.pkl
+  test: tstMat.pkl
+
+# Defines the names of the pre-extracted multimodal feature files.
+feature_files:
+  visual: image_feat.npy
+  textual: text_feat.npy
+
+# ======================================================
+# Data Loading Parameters
+# ======================================================
+# Defines the columns in the interaction files.
+# Assumes a tab-separated file without a header.
+# load_col:
+#   inter: ['user_id', 'item_id', 'rating', 'timestamp']
+# separator: "\t"

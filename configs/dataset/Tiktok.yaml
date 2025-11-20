@@ -1,0 +1,31 @@
+# configs/dataset/Tiktok.yaml
+# Version 2.1 - Adapted to the existing path logic in GDNSM.py
+
+# ======================================================
+# File Naming Conventions within the Tiktok directory
+# ======================================================
+# Defines the names of the interaction files.
+
+data_format: 'pickle' 
+
+# Assumes these files exist inside the directory specified by 
+# `data_path` + `dataset_name` (e.g., /path/to/datasets/Tiktok/).
+interaction_files:
+  train: trnMat.pkl
+  valid: valMat.pkl
+  test: tstMat.pkl
+
+# Defines the names of the pre-extracted multimodal feature files.
+feature_files:
+  visual: image_feat.npy
+  textual: text_feat.npy
+#   audio: audio_feat.npy  # [ADDED] Acknowledging the new audio feature file.
+
+# ======================================================
+# Data Loading Parameters
+# ======================================================
+# Defines the columns in the interaction files.
+# Assumes a tab-separated file without a header.
+# load_col:
+#   inter: ['user_id', 'item_id', 'rating', 'timestamp']
+# separator: "\t"

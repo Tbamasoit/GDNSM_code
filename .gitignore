@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE specific
+.vscode/
+.idea/
+
+# Other
+.DS_Store

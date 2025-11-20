@@ -1,0 +1,48 @@
+# configs/dataset/Amazon-baby.yaml
+# Version 2.0 - Audited against GDNSM.py and modern DataLoader practices
+
+# ======================================================
+# Core Settings - The absolute essentials
+# ======================================================
+
+# [MODIFIED] The full, direct path to the root of the Amazon-baby dataset directory.
+# This directory should contain train.txt, valid.txt, test.txt, v_feat.pt, etc.
+# !!! IMPORTANT: You MUST update this path to your actual local path !!!
+# data_path: "/path/to/your/datasets"
+
+# ======================================================
+# File Naming Conventions - Makes DataLoader flexible
+# ======================================================
+# The names of the interaction files within the data_path directory. 
+
+# [ADDED] A new key to specify the format of interaction data.
+# This tells the DataLoader to use pickle.load() instead of pd.read_csv().
+data_format: 'pickle' 
+
+# [MODIFIED] The names of the interaction files.
+interaction_files:
+  train: trnMat.pkl
+  valid: valMat.pkl
+  test: tstMat.pkl
+
+# [MODIFIED] The names of the pre-extracted multimodal feature files.
+feature_files:
+  visual: image_feat.npy
+  textual: text_feat.npy
+
+# ======================================================
+# Data Loading Parameters - For Pandas/DataLoader
+# ======================================================
+# Defines the columns in the interaction files.
+# Assumes a tab-separated file without a header.
+# load_col:
+#   inter: ['user_id', 'item_id', 'rating', 'timestamp']
+# separator: "\t" # Specify the separator for the interaction files.
+
+# ======================================================
+# Dataset Metadata (Optional but recommended)
+# ======================================================
+# These values can be used for quick verification.
+# n_users: 192403
+# n_items: 63001
+# inter_num: 1689188

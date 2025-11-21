@@ -33,3 +33,15 @@ recommend_topk_dir: 'results/' # [ADDED] Directory to save the recommendation li
 hyper_parameters:
   - learning_rate
   - train_batch_size
+
+
+
+# These are required by the GeneralRecommender base class and data loaders.
+
+USER_ID_FIELD: 'user_id'
+ITEM_ID_FIELD: 'item_id'
+RATING_FIELD: 'rating'
+TIME_FIELD: 'timestamp'
+
+# Prefix for negative item sample columns (if used by any part of the code)
+NEG_PREFIX: 'neg_'

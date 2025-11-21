@@ -499,3 +499,196 @@ class GDNSM(GeneralRecommender):
 
         scores = torch.matmul(u_embeddings, restore_item_e.transpose(0, 1))
         return scores
+    
+#目的：责任分离” (Separation of Concerns
+#让GDNSM模型定义神经网络架构和计算逻辑（前向传播、损失计算），计算核心
+#MyDataset类处理所有与数据相关的“脏活累活”，数据工程师
+    
+#请把我已经计算好的邻接矩阵和特征张量直接递给我，我立刻就能开始工作
+#希望它的 __init__ 签名变成 (self, config, adj_matrix, features)  
+class MyGDNSM(GeneralRecommender):
+    def __init__(self, config, dataset_info):
+        super().__init__(config)#不再需要传入dataset
+        #所有config传入参数
+        self.sparse = True
+        self.cl_loss = config['cl_loss']
+        self.n_ui_layers = config['n_ui_layers']
+        self.embedding_dim = config['embedding_size']
+        self.knn_k = config['knn_k'] # 10
+        self.n_layers = config['n_layers']
+        self.reg_weight = config['reg_weight']
+        
+        self.timesteps = config['timesteps']
+        self.d_epoch = config['d_epoch']
+        self.no_diff = True
+        self.mm_diff = False
+
+        #所有从dataset_info中传入的参数
+        self.n_users = dataset_info['n_users']
+        self.n_items = dataset_info['n_items']
+        self.norm_adj = dataset_info['norm_adj']
+        self.R = dataset_info['R_tensor']
+        self.image_original_adj = dataset_info['image_adj']
+        self.text_original_adj = dataset_info['text_adj']
+        self.v_feat = dataset_info['v_feat']
+        self.t_feat = dataset_info['t_feat']
+
+        self.diffusion_MM = Diffusion_CFG(config, self.embedding_dim, self.embedding_dim, self.timesteps, self.v_feat.shape[1], self.t_feat.shape[1])
+
+        # load dataset info  TrainDataLoader.inter_matrix
+        # self.interaction_matrix = dataset.inter_matrix(form='coo').astype(np.float32) # .shape [n_users, n_items]
+
+        #初始化embedding层
+        self.user_embedding = nn.Embedding(self.n_users, self.embedding_dim)
+        self.item_id_embedding = nn.Embedding(self.n_items, self.embedding_dim)
+        self.image_embedding = nn.Embedding.from_pretrained(self.v_feat, freeze=False)
+        self.text_embedding = nn.Embedding.from_pretrained(self.t_feat, freeze=False)
+        self.image_trs = nn.Linear(self.v_feat.shape[1], self.embedding_dim)
+        self.text_trs = nn.Linear(self.t_feat.shape[1], self.embedding_dim)
+
+        # dataset_path = os.path.abspath(config['data_path'] + config['dataset'])
+        # image_adj_file = os.path.join(dataset_path, 'image_adj_{}_{}.pt'.format(self.knn_k, self.sparse))
+        # text_adj_file = os.path.join(dataset_path, 'text_adj_{}_{}.pt'.format(self.knn_k, self.sparse))
+        #self.norm_adj = self.get_adj_mat() # [n_users+n_items, n_users+n_items]
+        #self.R = self.sparse_mx_to_torch_sparse_tensor(self.R).float().to(self.device) 
+        #self.norm_adj = self.sparse_mx_to_torch_sparse_tensor(self.norm_adj).float().to(self.device)
+
+        # if self.v_feat is not None: 
+        #     self.image_embedding = nn.Embedding.from_pretrained(self.v_feat, freeze=False)
+        #     if os.path.exists(image_adj_file):
+        #         image_adj = torch.load(image_adj_file)
+        #     else:
+        #         image_adj = build_sim(self.image_embedding.weight.detach())
+        #         image_adj = build_knn_normalized_graph(image_adj, topk=self.knn_k, is_sparse=self.sparse,
+        #                                                norm_type='sym') # knn weighted each element before norm is float not {0, 1}
+        #         torch.save(image_adj, image_adj_file)
+        #     self.image_original_adj = image_adj.cuda()
+
+        # if self.t_feat is not None:
+        #     self.text_embedding = nn.Embedding.from_pretrained(self.t_feat, freeze=False)
+        #     if os.path.exists(text_adj_file):
+        #         text_adj = torch.load(text_adj_file)
+        #     else:
+        #         text_adj = build_sim(self.text_embedding.weight.detach())
+        #         text_adj = build_knn_normalized_graph(text_adj, topk=self.knn_k, is_sparse=self.sparse, norm_type='sym')
+        #         torch.save(text_adj, text_adj_file)
+        #     self.text_original_adj = text_adj.cuda()
+
+        # if self.v_feat is not None:
+        #     self.image_trs = nn.Linear(self.v_feat.shape[1], self.embedding_dim)
+        # if self.t_feat is not None:
+        #     self.text_trs = nn.Linear(self.t_feat.shape[1], self.embedding_dim)
+
+
+    def pre_epoch_processing(self):
+        pass
+
+
+
+    def forward(self, adj, train=False):
+        if self.v_feat is not None:
+            image_feats = self.image_trs(self.image_embedding.weight) # mlp
+        if self.t_feat is not None: 
+            text_feats = self.text_trs(self.text_embedding.weight) # mlp
+
+        image_item_embeds = self.item_id_embedding.weight 
+        text_item_embeds = self.item_id_embedding.weight
+
+        # User-Item View
+        item_embeds = self.item_id_embedding.weight
+        user_embeds = self.user_embedding.weight
+        ego_embeddings = torch.cat([user_embeds, item_embeds], dim=0)
+        all_embeddings = [ego_embeddings]
+        for i in range(self.n_ui_layers):
+            side_embeddings = torch.sparse.mm(adj, ego_embeddings)
+            ego_embeddings = side_embeddings
+            all_embeddings += [ego_embeddings]
+        all_embeddings = torch.stack(all_embeddings, dim=1)
+        all_embeddings = all_embeddings.mean(dim=1, keepdim=False)
+        content_embeds = all_embeddings
+
+        # Item-Item View
+        if self.sparse:
+            for i in range(self.n_layers):
+                image_item_embeds = torch.sparse.mm(self.image_original_adj, image_item_embeds)
+        else:
+            for i in range(self.n_layers):
+                image_item_embeds = torch.mm(self.image_original_adj, image_item_embeds)
+        image_user_embeds = torch.sparse.mm(self.R, image_item_embeds)
+        image_embeds = torch.cat([image_user_embeds, image_item_embeds], dim=0)
+        if self.sparse:
+            for i in range(self.n_layers):
+                text_item_embeds = torch.sparse.mm(self.text_original_adj, text_item_embeds)
+        else:
+            for i in range(self.n_layers):
+                text_item_embeds = torch.mm(self.text_original_adj, text_item_embeds)
+        text_user_embeds = torch.sparse.mm(self.R, text_item_embeds)
+        text_embeds = torch.cat([text_user_embeds, text_item_embeds], dim=0)
+
+        side_embeds = (0.1*image_embeds + 0.9*text_embeds)/3 # ab
+        
+        all_embeds = content_embeds + side_embeds # content->id side->MM
+
+        all_embeddings_users, all_embeddings_items = torch.split(all_embeds, [self.n_users, self.n_items], dim=0)
+
+        if train:
+            return all_embeddings_users, all_embeddings_items, side_embeds, content_embeds
+
+        return all_embeddings_users, all_embeddings_items
+
+    def bpr_loss(self, users, pos_items, neg_items):
+        pos_scores = torch.sum(torch.mul(users, pos_items), dim=1)
+        neg_scores = torch.sum(torch.mul(users, neg_items), dim=1)
+
+        regularizer = 1. / 2 * (users ** 2).sum() + 1. / 2 * (pos_items ** 2).sum() + 1. / 2 * (neg_items ** 2).sum()
+        regularizer = regularizer / self.batch_size
+
+        maxi = F.logsigmoid(pos_scores - neg_scores)
+        mf_loss = -torch.mean(maxi)
+
+        emb_loss = self.reg_weight * regularizer
+        reg_loss = 0.0
+        return mf_loss, emb_loss, reg_loss
+
+    def InfoNCE(self, view1, view2, temperature):
+        view1, view2 = F.normalize(view1, dim=1), F.normalize(view2, dim=1)
+        pos_score = (view1 * view2).sum(dim=-1)
+        pos_score = torch.exp(pos_score / temperature)
+        ttl_score = torch.matmul(view1, view2.transpose(0, 1))
+        ttl_score = torch.exp(ttl_score / temperature).sum(dim=1)
+        cl_loss = -torch.log(pos_score / ttl_score)
+        return torch.mean(cl_loss)
+
+    def calculate_loss(self, interaction):
+        users = interaction[0] # [training_batch_size]
+        pos_items = interaction[1]
+        neg_items = interaction[2]
+
+        ua_embeddings, ia_embeddings, side_embeds, content_embeds = self.forward(
+            self.norm_adj, train=True)
+
+        u_g_embeddings = ua_embeddings[users]
+        pos_i_g_embeddings = ia_embeddings[pos_items]
+        neg_i_g_embeddings = ia_embeddings[neg_items]
+
+        batch_mf_loss, batch_emb_loss, batch_reg_loss = self.bpr_loss(u_g_embeddings, pos_i_g_embeddings,
+                                                                      neg_i_g_embeddings)
+
+        side_embeds_users, side_embeds_items = torch.split(side_embeds, [self.n_users, self.n_items], dim=0)
+        content_embeds_user, content_embeds_items = torch.split(content_embeds, [self.n_users, self.n_items], dim=0)
+        cl_loss = self.InfoNCE(side_embeds_items[pos_items], content_embeds_items[pos_items], 0.2) + self.InfoNCE(
+            side_embeds_users[users], content_embeds_user[users], 0.2)
+
+        return batch_mf_loss + batch_emb_loss + batch_reg_loss + self.cl_loss * cl_loss
+
+    def full_sort_predict(self, interaction):
+        user = interaction[0] # [eval_batch_size]
+        
+        restore_user_e, restore_item_e = self.forward(self.norm_adj)
+        u_embeddings = restore_user_e[user]
+
+        scores = torch.matmul(u_embeddings, restore_item_e.transpose(0, 1))
+        return scores
+
+
+

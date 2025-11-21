@@ -69,32 +69,38 @@ class GeneralRecommender(AbstractRecommender):
     """This is a abstract general recommender. All the general model should implement this class.
     The base general recommender class provide the basic dataset and parameters information.
     """
-    def __init__(self, config, dataloader):
+    def __init__(self, config, dataloader=None):
         super(GeneralRecommender, self).__init__()
+        # --- Section 1: Load Core Metadata directly from config ---
+        self.config = config
 
         # load dataset info
         self.USER_ID = config['USER_ID_FIELD']
         self.ITEM_ID = config['ITEM_ID_FIELD']
         self.NEG_ITEM_ID = config['NEG_PREFIX'] + self.ITEM_ID
-        self.n_users = dataloader.dataset.get_user_num()
-        self.n_items = dataloader.dataset.get_item_num()
+        self.n_users = config['n_users']
+        self.n_items = config['n_items']
 
         # load parameters info
         self.batch_size = config['train_batch_size']
         self.device = config['device']
 
+        # --- Section 4: [移除] Feature Loading Logic ---
+        # [修改点 2] 将特征加载的责任完全移交给 MyDataset。
+        # GeneralRecommender 作为一个抽象基类，不应该关心具体的特征文件路径。
+        # 子类 (如 GDNSM) 将从 MyDataset 接收预处理好的特征张量。
         # load encoded features here
         self.v_feat, self.t_feat = None, None
-        if not config['end2end'] and config['is_multimodal_model']:
-            dataset_path = os.path.abspath(config['data_path'] + config['dataset'])
-            # if file exist?
-            v_feat_file_path = os.path.join(dataset_path, config['vision_feature_file'])
-            t_feat_file_path = os.path.join(dataset_path, config['text_feature_file'])
-            if os.path.isfile(v_feat_file_path):
-                self.v_feat = torch.from_numpy(np.load(v_feat_file_path, allow_pickle=True)).type(torch.FloatTensor).to(
-                    self.device)
-            if os.path.isfile(t_feat_file_path):
-                self.t_feat = torch.from_numpy(np.load(t_feat_file_path, allow_pickle=True)).type(torch.FloatTensor).to(
-                    self.device)
+        # if not config['end2end'] and config['is_multimodal_model']:
+        #     dataset_path = os.path.abspath(config['data_path'] + config['dataset'])
+        #     # if file exist?
+        #     v_feat_file_path = os.path.join(dataset_path, config['vision_feature_file'])
+        #     t_feat_file_path = os.path.join(dataset_path, config['text_feature_file'])
+        #     if os.path.isfile(v_feat_file_path):
+        #         self.v_feat = torch.from_numpy(np.load(v_feat_file_path, allow_pickle=True)).type(torch.FloatTensor).to(
+        #             self.device)
+        #     if os.path.isfile(t_feat_file_path):
+        #         self.t_feat = torch.from_numpy(np.load(t_feat_file_path, allow_pickle=True)).type(torch.FloatTensor).to(
+        #             self.device)
 
-            assert self.v_feat is not None or self.t_feat is not None, 'Features all NONE'
+        #     assert self.v_feat is not None or self.t_feat is not None, 'Features all NONE'

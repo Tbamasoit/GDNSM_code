@@ -5,6 +5,9 @@ from tqdm import tqdm
 from utils.sampler import DiffusionSampler 
 from utils.scheduler import dynamic_difficulty_scheduler
 from utils.topk_evaluator import TopKEvaluator # 导入新的评估器
+import logging
+
+logger = logging.getLogger(__name__)
 
 class Trainer:
     def __init__(self, config, model, train_dataloader, valid_dataloader, optimizer):
@@ -81,13 +84,35 @@ class Trainer:
         return epoch_loss / len(self.train_dataloader)
 
     def fit(self):
+        """
+        Drives the complete training and validation loop, with integrated negative sampling
+        at the beginning of each epoch.
+        """
+        logger.info("================== Starting Training ==================")
         for epoch_idx in range(self.config['epochs']):
-            train_loss = self._train_epoch(epoch_idx)
-            print(f"Epoch {epoch_idx}, Train Loss: {train_loss:.4f}")
             
-            # 在这里可以加入评估逻辑
-            # if (epoch_idx + 1) % self.config['eval_step'] == 0:
-            #     self.evaluate()
+            # --- [核心修改] 在每个 epoch 开始前，执行负采样 ---
+            logger.info(f"Epoch {epoch_idx} | Phase: Negative Sampling")
+            # 我们通过 train_dataloader 访问其内部的 dataset 对象 (即 TrnData 实例)
+            # 然后调用它的 negSampling 方法
+            self.train_dataloader.dataset.negSampling()
+            logger.info("Negative sampling for epoch completed.")
+
+            # --- 训练阶段 ---
+            train_loss = self._train_epoch(epoch_idx)
+            # self._log_metrics({'train_loss': train_loss}, epoch_idx, 'train') # 假设有 log 方法
+
+            # --- 评估阶段 ---
+            # 检查是否到达评估的 epoch
+            if (epoch_idx + 1) % self.config['eval_step'] == 0:
+                logger.info(f"Epoch {epoch_idx} | Phase: Validation")
+                # 调用我们已经写好的评估方法
+                valid_score = self._valid_epoch(epoch_idx)
+                
+                # 可以在这里添加模型保存和早停的逻辑
+                # ...
+        
+        logger.info("================== Training Finished ==================")
 
     # def evaluate(self):
     #     # ... 评估逻辑 ...

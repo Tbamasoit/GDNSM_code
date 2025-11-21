@@ -10,3 +10,6 @@ __pycache__/
 
 # Other
 .DS_Store
+
+# Ignore the entire datasets folder
+/datasets/

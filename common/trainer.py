@@ -1,8 +1,7 @@
 # trainer.py
 import torch
 from tqdm import tqdm
-# 假设你会在 utils 里写 sampler 和 scheduler
-from utils.sampler import DiffusionSampler 
+
 from utils.scheduler import dynamic_difficulty_scheduler
 from utils.topk_evaluator import TopKEvaluator # 导入新的评估器
 import logging
@@ -20,11 +19,11 @@ class Trainer:
         self.evaluator = TopKEvaluator(config)
         
         # 初始化 Diffusion Sampler (对应论文 2.4.2 节)
-        self.sampler = DiffusionSampler(model.diffusion_model, config)
+        # self.sampler = DiffusionSampler(model.diffusion_model, config)
 
     def _train_epoch(self, epoch_idx):
         self.model.train()
-        epoch_loss = 0.0
+        epoch_total_loss = 0.0
         
         # 使用 tqdm 创建一个进度条
         for batch_idx, batch_data in enumerate(tqdm(self.train_dataloader, desc=f"Epoch {epoch_idx}")):
@@ -36,16 +35,63 @@ class Trainer:
             pos_items = batch_data[1, :]
             neg_items = batch_data[2, :]
 
-            # --- 2. PyTorch 训练黄金五步法 (保持不变) ---
-            # === Algorithm 1, lines 7-12: 训练扩散模型 ===
-            self.optimizer.zero_grad()
-            # 注意：论文中是两个独立的优化步骤，这里为了简化先合并，后续可拆分
-            # diff_loss = self.model.calculate_diffusion_loss(pos_items) # 在模型主类中实现
-            # diff_loss.backward()
-            # self.optimizer.step()
+            # ======================================================================
+            # 阶段一: 训练扩散模型 (对应 Algorithm 1, lines 7-12)
+            # ======================================================================
 
-            # === Algorithm 1, lines 13-26: 训练推荐模型 (MCI Encoder) ===
+            # 1. 准备数据：获取正样本嵌入和条件信息
+            # 我们需要模型提供一个方法来获取这些东西
+            with torch.no_grad():
+                pos_item_embeds, diffusion_conditions = self.model.get_diffusion_inputs(users, pos_items)
+
+            # 2. 计算扩散损失
             self.optimizer.zero_grad()
+            diffusion_loss = self.model.diffusion_MM(pos_item_embeds, diffusion_conditions, self.device)
+            diffusion_loss = self.model.diffusion_MM(pos_item_embeds, diffusion_conditions, self.device)
+            
+             # 3. 反向传播并更新 (只更新扩散模型的参数)
+            # 为了实现交替训练，理想情况下应该有两个优化器。
+            # 简化版：我们先用一个优化器更新所有参数。
+            diffusion_loss.backward()
+            self.optimizer.step()
+
+            # ======================================================================
+            # 阶段二: 训练推荐模型 (对应 Algorithm 1, lines 13-26)
+            # ======================================================================
+
+            # 1. (可选) 生成困难负样本
+            # 注意：这部分计算成本很高，可以先注释掉以快速跑通
+            generated_negs_embeds = None
+            if epoch_idx >= self.config['d_epoch']: # d_epoch 是开始生成负样本的 epoch
+                with torch.no_grad():
+                    num_to_generate = 1 # 简化：每种难度只生成一个
+                    shape = (users.shape[0], self.config['embedding_size'])
+                    
+                    # 生成 3 种难度的负样本
+                    # flag=1: visually similar
+                    negs_v = self.model.diffusion_MM.sample(shape, diffusion_conditions, flag=1)
+                    # flag=2: textually similar
+                    negs_t = self.model.diffusion_MM.sample(shape, diffusion_conditions, flag=2)
+                    # flag=3: both similar
+                    negs_vt = self.model.diffusion_MM.sample(shape, diffusion_conditions, flag=3)
+                    
+                    # (简化) 我们暂时只用最难的那一种
+                    # 论文中 p_sample_loop 返回的是一个列表，我们取最后一个
+                    generated_negs_embeds = negs_vt[-1]
+
+
+            # 2. 计算推荐模型的损失 (BPR + CL Loss)
+            self.optimizer.zero_grad()
+            # 模型的 calculate_loss 需要被修改，以接收生成的负样本
+            recommender_loss = self.model.calculate_loss(batch_data, generated_negs_embeds)
+        
+            # 3. 反向传播并更新
+            recommender_loss.backward()
+            self.optimizer.step()
+
+            # --- 记录总损失 ---
+            total_loss = diffusion_loss + recommender_loss
+            epoch_total_loss += total_loss.item()
 
             #针对这里的loss计算到底用哪一种，进行讨论
             # # 1. 生成困难负样本 (lines 13-21)
@@ -69,19 +115,14 @@ class Trainer:
             # # loss = bpr_loss + self.config['lambda_cl'] * cl_loss + self.config['lambda_neg'] * neg_loss + diff_loss
             # loss = bpr_loss + self.config['lambda_cl'] * cl_loss # 先从简单的开始
             
-            loss = self.model.calculate_loss(batch_data)
-
-            loss.backward()
-            self.optimizer.step()
             
-            epoch_loss += loss.item()
 
             # --- 冒烟测试 (保持) ---
             if batch_idx >= 0:
                 print("\nSmoke test passed for one batch!")
                 break
 
-        return epoch_loss / len(self.train_dataloader)
+        return epoch_total_loss / (batch_idx + 1)
 
     def fit(self):
         """

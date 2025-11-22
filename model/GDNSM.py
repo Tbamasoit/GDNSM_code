@@ -659,7 +659,8 @@ class MyGDNSM(GeneralRecommender):
         cl_loss = -torch.log(pos_score / ttl_score)
         return torch.mean(cl_loss)
 
-    def calculate_loss(self, interaction):
+    # 修改签名，增加 generated_negs 参数
+    def calculate_loss(self, interaction, generated_negs=None):
         users = interaction[0] # [training_batch_size]
         pos_items = interaction[1]
         neg_items = interaction[2]
@@ -671,6 +672,7 @@ class MyGDNSM(GeneralRecommender):
         pos_i_g_embeddings = ia_embeddings[pos_items]
         neg_i_g_embeddings = ia_embeddings[neg_items]
 
+        # 1. 计算标准的 BPR 和 CL Loss
         batch_mf_loss, batch_emb_loss, batch_reg_loss = self.bpr_loss(u_g_embeddings, pos_i_g_embeddings,
                                                                       neg_i_g_embeddings)
 
@@ -679,7 +681,22 @@ class MyGDNSM(GeneralRecommender):
         cl_loss = self.InfoNCE(side_embeds_items[pos_items], content_embeds_items[pos_items], 0.2) + self.InfoNCE(
             side_embeds_users[users], content_embeds_user[users], 0.2)
 
-        return batch_mf_loss + batch_emb_loss + batch_reg_loss + self.cl_loss * cl_loss
+        recommender_loss = batch_mf_loss + batch_emb_loss + batch_reg_loss + self.cl_loss * cl_loss
+        
+        # 2. [新增] 如果有生成的困难负样本，计算额外的 BPR Loss
+        if generated_negs is not None:
+            # 注意：generated_negs 是嵌入向量，不是 ID
+            # 我们需要计算它和用户嵌入的得分
+            generated_neg_scores = torch.sum(u_g_embeddings * generated_negs, dim=1)
+            pos_scores = torch.sum(u_g_embeddings * pos_i_g_embeddings, dim=1)
+            
+            # 论文中的 L_NEG (公式 24)
+            generated_loss = -torch.mean(F.logsigmoid(pos_scores - generated_neg_scores))
+            
+            # 从 config 中获取权重
+            recommender_loss += self.config['lambda_neg'] * generated_loss
+
+        return recommender_loss
 
     def full_sort_predict(self, interaction):
         user = interaction[0] # [eval_batch_size]
@@ -689,6 +706,30 @@ class MyGDNSM(GeneralRecommender):
 
         scores = torch.matmul(u_embeddings, restore_item_e.transpose(0, 1))
         return scores
+    
+    # in models/GDNSM.py -> class GDNSM
+
+    def get_diffusion_inputs(self, users, pos_items):
+        """
+        为扩散模型的训练和采样准备输入。
+        返回：正样本嵌入，以及拼接好的条件信息 (user, text, visual)。
+        """
+        # 1. 获取所有嵌入
+        ua_embeddings, ia_embeddings, _, _ = self.forward(self.norm_adj, train=True)
+        
+        # 2. 提取当前批次的正样本嵌入
+        pos_item_embeds = ia_embeddings[pos_items]
+        user_embeds = ua_embeddings[users]
+        
+        # 3. 提取对应的多模态特征并转换维度
+        # 注意：这里需要 self.text_trs 和 self.image_trs 两个 MLP
+        pos_text_feats = self.text_trs(self.text_embedding(pos_items))
+        pos_visual_feats = self.image_trs(self.image_embedding(pos_items))
+        
+        # 4. 拼接成 Diffusion_CFG.forward 所需的 'labels' 格式
+        diffusion_conditions = torch.cat([user_embeds, pos_text_feats, pos_visual_feats], dim=1)
+        
+        return pos_item_embeds, diffusion_conditions
 
 
 

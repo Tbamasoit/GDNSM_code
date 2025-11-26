@@ -9,12 +9,19 @@ gpu_id: 0          #√
 data_path: "/home/ma-user/work/GDNSM/datasets/"
 
 # 训练设置
-epochs: 200       #√            # 论文未明确指定，这是一个合理的初始值
+epochs: 200       #√            #200 论文未明确指定，这是一个合理的初始值
 train_batch_size: 2048    #√     # 对应论文 3.1.3 节
 learning_rate: 0.001  #√       # 对应论文 3.1.3 节 (1e-3)
 optimizer: 'Adam'         #√       # 对应论文 Algorithm 1
 eval_step: 1         #√         # 每隔多少个 epoch 评估一次
 stopping_step: 10      #√       # Early stopping 的耐心值
+
+# ==========================================
+# [新增] 冒烟测试开关
+# ==========================================
+# 如果设为 True，Trainer 只会跑一个 Batch 就退出。
+# 用于快速检查代码是否报错，而不必等完整个 Epoch。
+smoke_test: False  
 
 # 评估设置
 #eval_setting: TO_LS_RS       # 根据你的评估代码设置 (e.g., Top-k, Leave-one-out)
@@ -27,6 +34,8 @@ eval_batch_size: 4096
 checkpoint_dir: 'checkpoints/' # [ADDED] Directory to save model checkpoints.
 save_recommended_topk: False   # [ADDED] Whether to save the final recommendation list.
 recommend_topk_dir: 'results/' # [ADDED] Directory to save the recommendation list file.
+# [新增] TensorBoard 日志目录
+tensorboard_log_dir: 'tensorboard_logs/'
 
 # 用于自动调优的超参数列表
 # List of hyperparameters for automated tuning

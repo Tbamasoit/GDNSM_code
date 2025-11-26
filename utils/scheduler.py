@@ -13,8 +13,8 @@ class DynamicDifficultyScheduler:
             - num_gen_samples (int): 每个难度级别生成的样本数 M
         """
         self.S = config['d_epoch']     # 起始 Epoch
-        self.lam = config.get('lambda_coeff', 1.0) # 默认为 1.0
-        self.M = config.get('num_gen_samples', 1)  # 默认为 1 (源码中似乎设为1或3)
+        self.lam = config['lambda_coeff'] # 默认为 1.0
+        self.M = config['num_gen_samples']  # 默认为 1 (源码中似乎设为1或3)
         self.max_samples = 3 * self.M # 总共生成的样本池大小 (3个难度级)
 
 

@@ -13,3 +13,6 @@ __pycache__/
 
 # Ignore the entire datasets folder
 /datasets/
+tensorboard_logs/
+log/
+datasets

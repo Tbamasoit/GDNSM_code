@@ -511,6 +511,7 @@ class MyGDNSM(GeneralRecommender):
         super().__init__(config)#不再需要传入dataset
         #所有config传入参数
         self.sparse = True
+        self.device = config['device']
         self.cl_loss = config['cl_loss']
         self.n_ui_layers = config['n_ui_layers']
         self.embedding_dim = config['embedding_size']
@@ -526,12 +527,20 @@ class MyGDNSM(GeneralRecommender):
         #所有从dataset_info中传入的参数
         self.n_users = dataset_info['n_users']
         self.n_items = dataset_info['n_items']
-        self.norm_adj = dataset_info['norm_adj']
-        self.R = dataset_info['R_tensor']
-        self.image_original_adj = dataset_info['image_adj']
-        self.text_original_adj = dataset_info['text_adj']
-        self.v_feat = dataset_info['v_feat']
-        self.t_feat = dataset_info['t_feat']
+        self.norm_adj = dataset_info['norm_adj'].to(self.device)
+        self.R = dataset_info['R_tensor'].to(self.device)
+
+        # 多模态图也需要移动，否则后面还会报错
+        if dataset_info['image_adj'] is not None:
+            self.image_original_adj = dataset_info['image_adj'].to(self.device)
+        
+        if dataset_info['text_adj'] is not None:
+            self.text_original_adj = dataset_info['text_adj'].to(self.device)
+
+        # 特征矩阵通常用于初始化 Embedding，Embedding 层会自动处理设备移动
+        # 但为了保险起见，如果后面有直接使用 feats 的地方，也可以移一下
+        self.v_feat = dataset_info['v_feat'].to(self.device) if dataset_info['v_feat'] is not None else None
+        self.t_feat = dataset_info['t_feat'].to(self.device) if dataset_info['t_feat'] is not None else None
 
         self.diffusion_MM = Diffusion_CFG(config, self.embedding_dim, self.embedding_dim, self.timesteps, self.v_feat.shape[1], self.t_feat.shape[1])
 
@@ -684,17 +693,31 @@ class MyGDNSM(GeneralRecommender):
         recommender_loss = batch_mf_loss + batch_emb_loss + batch_reg_loss + self.cl_loss * cl_loss
         
         # 2. [新增] 如果有生成的困难负样本，计算额外的 BPR Loss
+        #  [适配重构] 处理生成的困难负样本
         if generated_negs is not None:
             # 注意：generated_negs 是嵌入向量，不是 ID
+            # generated_negs shape: [Batch, g(epoch), Dim]
+            # u_g_embeddings shape: [Batch, Dim] -> 需要 unsqueeze 变成 [Batch, 1, Dim]
+            
+            user_emb_expanded = u_g_embeddings.unsqueeze(1) # [B, 1, D]
+            
             # 我们需要计算它和用户嵌入的得分
-            generated_neg_scores = torch.sum(u_g_embeddings * generated_negs, dim=1)
-            pos_scores = torch.sum(u_g_embeddings * pos_i_g_embeddings, dim=1)
+            # 计算点积分数: [B, 1, D] * [B, g, D] -> sum(dim=-1) -> [B, g]
+            gen_neg_scores = (user_emb_expanded * generated_negs).sum(dim=-1)
+
+            # 正样本分数扩展: pos_scores [B] -> [B, 1]
+            pos_scores_expanded = torch.sum(u_g_embeddings * pos_i_g_embeddings, dim=1, keepdim=True)
+
+            
+            # generated_neg_scores = torch.sum(u_g_embeddings * generated_negs, dim=1)
+            # pos_scores = torch.sum(u_g_embeddings * pos_i_g_embeddings, dim=1)
             
             # 论文中的 L_NEG (公式 24)
-            generated_loss = -torch.mean(F.logsigmoid(pos_scores - generated_neg_scores))
-            
+            # 计算 Loss (广播机制: [B, 1] - [B, g] -> [B, g])
+            # 对 g 个负样本的 Loss 求平均
+            gen_loss = -torch.mean(F.logsigmoid(pos_scores_expanded - gen_neg_scores))            
             # 从 config 中获取权重
-            recommender_loss += self.config['lambda_neg'] * generated_loss
+            recommender_loss += self.config['lambda_neg']* gen_loss
 
         return recommender_loss
 
@@ -730,6 +753,45 @@ class MyGDNSM(GeneralRecommender):
         diffusion_conditions = torch.cat([user_embeds, pos_text_feats, pos_visual_feats], dim=1)
         
         return pos_item_embeds, diffusion_conditions
+    
+
+    @torch.no_grad()
+    def generate_batch_negatives(self, users, pos_items):
+        """
+        [新增接口] 为当前 Batch 的用户生成三个难度级别的负样本。
+        供 Trainer 调用。
+        
+        Returns:
+            neg_v, neg_t, neg_vt: 每一个形状都是 [Batch_size, M, Dim]
+        """
+        # 1. 准备条件 (重用你已经写的 get_diffusion_inputs)
+        # 注意：这里我们只需要 conditions，不需要 pos_item_embeds
+        _, diffusion_conditions = self.get_diffusion_inputs(users, pos_items)
+        
+        batch_size = users.shape[0]
+        # 假设生成样本数 M 从 config 获取，或者默认为 1
+        # 这里的 M 需要与 Scheduler 中的 M 保持一致
+        # 我们假设 Diffusion_CFG.sample 支持生成 M 个样本 (需要确认 sample 实现)
+        # 如果 sample 只生成 1 个，形状是 [Batch, Dim]，我们需要 reshape 为 [Batch, 1, Dim]
+        
+        shape = (batch_size, self.embedding_dim) 
+        
+        # 2. 调用扩散模型生成
+        # flag=1: Visually similar (Easy)
+        neg_v_list = self.diffusion_MM.sample(shape, diffusion_conditions, flag=1)
+        # sample 返回的是 list of tensors (time steps)，我们通常取最后一步 [-1]
+        neg_v = neg_v_list[-1].unsqueeze(1) # [Batch, 1, Dim] (假设 M=1)
+
+        # flag=2: Textually similar (Medium)
+        neg_t_list = self.diffusion_MM.sample(shape, diffusion_conditions, flag=2)
+        neg_t = neg_t_list[-1].unsqueeze(1)
+
+        # flag=3: Both similar (Hard)
+        neg_vt_list = self.diffusion_MM.sample(shape, diffusion_conditions, flag=3)
+        neg_vt = neg_vt_list[-1].unsqueeze(1)
+        
+        return neg_v, neg_t, neg_vt
+
 
 
 

@@ -137,6 +137,30 @@ class TstData(data.Dataset):
     def __getitem__(self, idx):
         return self.tstUsrs[idx], np.reshape(self.csrmat[self.tstUsrs[idx]].toarray(), [-1])
     
+    # === [新增] 核心修复：提供评估所需的 Ground Truth ===
+    def get_eval_items(self):
+        """
+        返回测试集中每个用户的真实正样本列表。
+        注意：返回顺序必须与 DataLoader 遍历用户的顺序一致 (即 self.tstUsrs 的顺序)。
+        """
+        ground_truth = []
+        for u in self.tstUsrs:
+            # tstLocs[u] 存储了用户 u 在测试集中的所有交互物品 ID
+            ground_truth.append(self.tstLocs[u])
+        return ground_truth
+    
+    def get_eval_len_list(self):
+        """
+        [新增] 返回测试集中每个用户的真实正样本数量。
+        用于计算 Recall 等指标的分母。
+        """
+        len_list = []
+        for u in self.tstUsrs:
+            # self.tstLocs[u] 是用户 u 的真实交互物品列表
+            len_list.append(len(self.tstLocs[u]))
+        return np.array(len_list)
+
+
 class DiffusionData(data.Dataset):
     def __init__(self, data):
         self.data = data

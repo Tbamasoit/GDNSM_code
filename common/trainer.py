@@ -175,13 +175,15 @@ class Trainer:
         
         # 遍历验证数据加载器
         for batch_idx, batch_data in enumerate(tqdm(self.valid_dataloader, desc=f"Epoch {epoch_idx} | Validation")):
-            # 假设 valid_dataloader 每次返回一个批次的用户ID
-            # users_batch = batch_data.to(self.device)
-            users_batch = batch_data[0] # 取列表的第一个元素
-            users_batch = users_batch.to(self.device).long()
+            # 1. 解包数据
+            # batch_data[0]: 用户 ID Tensor [Batch_Size]
+            # batch_data[1]: 训练集 Mask Tensor [Batch_Size, n_items]
+            users_batch = batch_data[0].to(self.device).long()
+            train_mask_batch = batch_data[1].to(self.device) 
             
-            # 1. 调用模型生成当前批次用户的分数
-            scores_batch = self.model.full_sort_predict([users_batch])
+            # 2. 预测 (将 Mask 传入模型)
+            # 注意：我们需要修改 full_sort_predict 的接口来接收这个 mask
+            scores_batch = self.model.full_sort_predict(users_batch, train_mask=train_mask_batch)
             
             # 2. 调用评估器的 collect 方法处理当前批次的结果
             # 注意：第二个参数 interaction 可以暂时用一个简单的对象或 None 替代

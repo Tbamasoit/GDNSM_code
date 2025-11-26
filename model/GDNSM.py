@@ -721,13 +721,25 @@ class MyGDNSM(GeneralRecommender):
 
         return recommender_loss
 
-    def full_sort_predict(self, interaction):
-        user = interaction[0] # [eval_batch_size]
+    def full_sort_predict(self, interaction, train_mask=None):
+        # 兼容性处理：interaction 可能是 list 也可能是 tensor
+        if isinstance(interaction, list):
+            user = interaction[0]
+        else:
+            user = interaction
         
         restore_user_e, restore_item_e = self.forward(self.norm_adj)
         u_embeddings = restore_user_e[user]
 
         scores = torch.matmul(u_embeddings, restore_item_e.transpose(0, 1))
+        
+        # === [核心修改] 应用 Mask ===
+        if train_mask is not None:
+            # train_mask 是 0/1 矩阵，1 表示训练集交互过
+            # 我们使用 masked_fill_ 将 1 的位置填充为 -1e9 (负无穷)
+            # 注意：train_mask 需要转为 bool 类型
+            scores.masked_fill_(train_mask.bool(), -1e9)
+            
         return scores
     
     # in models/GDNSM.py -> class GDNSM

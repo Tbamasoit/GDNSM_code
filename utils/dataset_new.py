@@ -116,6 +116,8 @@ class TrnData(data.Dataset):
 class TstData(data.Dataset):
     def __init__(self, config, coomat, trnMat):
         self.config = config
+        # 这里的 csrmat 已经是训练集的交互矩阵了
+        # 我们将其转换为 0/1 的 float 矩阵，方便后续生成 Mask
         self.csrmat = (trnMat.tocsr() != 0) * 1.0
 
         tstLocs = [None] * coomat.shape[0]
@@ -134,9 +136,19 @@ class TstData(data.Dataset):
     def __len__(self):
         return len(self.tstUsrs)
 
+    # === [核心修改] 返回 User ID 和 训练集 Mask ===
     def __getitem__(self, idx):
-        return self.tstUsrs[idx], np.reshape(self.csrmat[self.tstUsrs[idx]].toarray(), [-1])
-    
+        # return self.tstUsrs[idx], np.reshape(self.csrmat[self.tstUsrs[idx]].toarray(), [-1])
+        uid = self.tstUsrs[idx]
+        
+        # 获取该用户在训练集中的交互向量 (0/1向量)
+        # reshape 确保它是 [n_items] 的一维向量
+        # astype(np.float32) 确保转为 PyTorch 的 FloatTensor
+        train_mask = np.reshape(self.csrmat[uid].toarray(), [-1]).astype(np.float32)
+        
+        return uid, train_mask
+
+
     # === [新增] 核心修复：提供评估所需的 Ground Truth ===
     def get_eval_items(self):
         """
@@ -159,6 +171,20 @@ class TstData(data.Dataset):
             # self.tstLocs[u] 是用户 u 的真实交互物品列表
             len_list.append(len(self.tstLocs[u]))
         return np.array(len_list)
+    
+    def get_history_items(self):
+        """
+        返回测试集中每个用户在【训练集】中的交互历史。
+        用于在评估时屏蔽这些物品。
+        """
+        history_list = []
+        # self.tstUsrs 是测试集涉及的用户列表
+        # self.csrmat 是训练集的交互矩阵 (scipy.sparse.csr_matrix)
+        for u in self.tstUsrs:
+            # 获取用户 u 在训练集中交互过的物品索引
+            # csrmat[u].indices 返回非零元素的列索引
+            history_list.append(self.csrmat[u].indices)
+        return history_list
 
 
 class DiffusionData(data.Dataset):
